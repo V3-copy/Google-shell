@@ -7,7 +7,7 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Cleanup handler on exit or timeout
+# Cleanup handler
 cleanup() {
     echo -e "\n${YELLOW}[*] Shutting down and cleaning up resources...${NC}"
     kill $(jobs -p) 2>/dev/null
@@ -21,7 +21,7 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
-# Background idle monitor for Cloud Shell quota preservation
+# Background idle monitor
 monitor_idle() {
     local IDLE_TIME=0
     local MAX_IDLE=900 # 15 minutes
@@ -43,24 +43,31 @@ monitor_idle() {
 }
 
 echo -e "${GREEN}[*] Initializing Automated Cyber Lab Deployment...${NC}"
-
-# Remove any existing container instance
 docker rm -f cyber-lab > /dev/null 2>&1
 
-# Setup persistent directory
+# Create persistence directory
 mkdir -p /home/$USER/lab-data/persistent_data
+chmod 777 /home/$USER/lab-data/persistent_data
 
 echo -e "${GREEN}[*] Deploying Kasm workspace on port 8080...${NC}"
 docker run -d --name cyber-lab \
   -p 8080:6901 \
+  --shm-size=512m \
   -e VNC_PW=1234 \
   -v /home/$USER/lab-data/persistent_data:/home/kasm-user/Desktop/persistent_data \
   --privileged kasmweb/desktop:1.15.0 > /dev/null
 
-echo -e "${GREEN}[*] Waiting for container initialization (15s)...${NC}"
-sleep 15
+# Dynamic readiness loop (prevents "container is not running" error)
+echo -e "${GREEN}[*] Waiting for container to be fully running...${NC}"
+for i in {1..30}; do
+    STATUS=$(docker inspect -f '{{.State.Status}}' cyber-lab 2>/dev/null)
+    if [ "$STATUS" == "running" ]; then
+        break
+    fi
+    sleep 2
+done
+sleep 3
 
-# Configure credentials, sudoers, and install suite
 echo -e "${GREEN}[*] Configuring root access & installing pentesting tools...${NC}"
 docker exec -u 0 cyber-lab bash -c "
     echo 'root:1234' | chpasswd && \
@@ -72,7 +79,6 @@ docker exec -u 0 cyber-lab bash -c "
     echo 'kasm-user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 "
 
-# Install cloudflared daemon if not present
 if ! command -v cloudflared &> /dev/null; then
     echo -e "${GREEN}[*] Installing Cloudflare Tunnel daemon...${NC}"
     wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
@@ -80,7 +86,6 @@ if ! command -v cloudflared &> /dev/null; then
     rm -f cloudflared-linux-amd64.deb
 fi
 
-# Launch Cloudflare HTTPS tunnel
 echo -e "${GREEN}[*] Establishing Cloudflare HTTPS Tunnel...${NC}"
 pkill -f cloudflared 2>/dev/null
 > cloudflare-lab.log
@@ -96,7 +101,6 @@ for i in {1..15}; do
     sleep 2
 done
 
-# Output credentials and keep shell alive
 if [ -z "$TUNNEL_URL" ]; then
     echo -e "${RED}\n⚠️ ERROR: Tunnel failed to generate a URL. Check 'cat cloudflare-lab.log' for details.${NC}"
     cleanup
@@ -113,11 +117,11 @@ else
     echo -e "💡 Note           : Passwordless 'sudo' access is enabled in GUI terminal!"
     echo ""
     echo -e "${YELLOW}⏳ Idle Monitor Active: Auto-shutdown triggers after 15m of low CPU (<2%).${NC}"
-    echo -e "${YELLOW}>>> PRESS [CTRL+C] TO STOP THE LAB AND DESTROY ENVIRONMENT <<<${NC}"
+    echo -e "${YELLOW}>>> PRESS ANY KEY OR [CTRL+C] TO STOP THE LAB AND DESTROY ENVIRONMENT <<<${NC}"
     
     monitor_idle &
     
-    while true; do
-        sleep 1
-    done
+    # Wait for ANY key press to destroy container and exit cleanly
+    read -n 1 -s -r
+    cleanup
 fi
