@@ -46,7 +46,7 @@ docker rm -f cyber-lab > /dev/null 2>&1
 mkdir -p /home/$USER/lab-data/persistent_data
 chmod -R 777 /home/$USER/lab-data/persistent_data
 
-echo -e "${GREEN}[*] Deploying Kasm workspace on port 8080...${NC}"
+echo -e "${GREEN}[*] Deploying Kasm workspace container...${NC}"
 docker run -d --name cyber-lab \
   -p 8080:6901 \
   --shm-size=512m \
@@ -54,21 +54,24 @@ docker run -d --name cyber-lab \
   -v /home/$USER/lab-data/persistent_data:/persistent_data \
   kasmweb/desktop:1.15.0 > /dev/null
 
-echo -e "${GREEN}[*] Verifying container startup...${NC}"
-RUNNING=false
-for i in {1..20}; do
-    if [ "$(docker inspect -f '{{.State.Running}}' cyber-lab 2>/dev/null)" == "true" ]; then
-        RUNNING=true
+echo -e "${GREEN}[*] Waiting for container to fully initialize...${NC}"
+CONTAINER_IP=""
+for i in {1..30}; do
+    CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' cyber-lab 2>/dev/null)
+    if [ -n "$CONTAINER_IP" ]; then
         break
     fi
     sleep 1
 done
 
-if [ "$RUNNING" != "true" ]; then
-    echo -e "${RED}⚠️ Docker container failed to stay alive.${NC}"
-    docker logs --tail 20 cyber-lab
-    cleanup
-fi
+# Wait for Kasm web engine to actively respond
+echo -e "${GREEN}[*] Verifying Kasm web service health...${NC}"
+for i in {1..30}; do
+    if curl -k -s -o /dev/null --connect-timeout 2 "https://${CONTAINER_IP}:6901"; then
+        break
+    fi
+    sleep 2
+done
 
 echo -e "${GREEN}[*] Configuring root access, tools & symlinks...${NC}"
 docker exec -u 0 cyber-lab bash -c "
@@ -82,7 +85,7 @@ docker exec -u 0 cyber-lab bash -c "
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nmap wireshark sqlmap hydra sudo onboard > /dev/null 2>&1 && \
     usermod -aG sudo kasm-user && \
     echo 'kasm-user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-"
+" &
 
 if ! command -v cloudflared &> /dev/null; then
     echo -e "${GREEN}[*] Installing Cloudflare Tunnel daemon...${NC}"
@@ -91,22 +94,14 @@ if ! command -v cloudflared &> /dev/null; then
     rm -f cloudflared-linux-amd64.deb
 fi
 
-echo -e "${GREEN}[*] Waiting for Kasm internal web service to respond...${NC}"
-for i in {1..30}; do
-    if curl -k -s --connect-timeout 2 https://127.0.0.1:8080/#/login >/dev/null 2>&1; then
-        break
-    fi
-    sleep 2
-done
-
 echo -e "${GREEN}[*] Establishing Cloudflare HTTPS Tunnel...${NC}"
 pkill -f cloudflared 2>/dev/null
 > cloudflare-lab.log
-nohup cloudflared tunnel --url https://127.0.0.1:8080 --no-tls-verify > cloudflare-lab.log 2>&1 &
+nohup cloudflared tunnel --url "https://${CONTAINER_IP}:6901" --no-tls-verify > cloudflare-lab.log 2>&1 &
 
 echo -e "${GREEN}[*] Awaiting tunnel handshake...${NC}"
 TUNNEL_URL=""
-for i in {1..15}; do
+for i in {1..20}; do
     TUNNEL_URL=$(grep -aEo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' cloudflare-lab.log | head -n 1)
     if [ -n "$TUNNEL_URL" ]; then
         break
@@ -134,10 +129,10 @@ else
     
     monitor_idle &
     
-    # Clear residual keyboard buffer
+    # Clear residual input
     while read -e -t 0.1 -n 10000 discard; do : ; done 2>/dev/null
     
-    # Wait for intentional key press
+    # Wait for keypress
     read -n 1 -s -r
     cleanup
 fi
