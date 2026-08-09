@@ -45,19 +45,19 @@ monitor_idle() {
 echo -e "${GREEN}[*] Initializing Automated Cyber Lab Deployment...${NC}"
 docker rm -f cyber-lab > /dev/null 2>&1
 
-# Create persistence directory
+# Create persistence directory with host write permissions
 mkdir -p /home/$USER/lab-data/persistent_data
-chmod 777 /home/$USER/lab-data/persistent_data
+chmod -R 777 /home/$USER/lab-data/persistent_data
 
 echo -e "${GREEN}[*] Deploying Kasm workspace on port 8080...${NC}"
 docker run -d --name cyber-lab \
   -p 8080:6901 \
   --shm-size=512m \
   -e VNC_PW=1234 \
-  -v /home/$USER/lab-data/persistent_data:/home/kasm-user/Desktop/persistent_data \
+  -v /home/$USER/lab-data/persistent_data:/persistent_data \
   --privileged kasmweb/desktop:1.15.0 > /dev/null
 
-# Dynamic readiness loop (prevents "container is not running" error)
+# Dynamic readiness loop
 echo -e "${GREEN}[*] Waiting for container to be fully running...${NC}"
 for i in {1..30}; do
     STATUS=$(docker inspect -f '{{.State.Status}}' cyber-lab 2>/dev/null)
@@ -66,12 +66,15 @@ for i in {1..30}; do
     fi
     sleep 2
 done
-sleep 3
+sleep 5
 
-echo -e "${GREEN}[*] Configuring root access & installing pentesting tools...${NC}"
+echo -e "${GREEN}[*] Configuring root access, symlinks & installing pentesting tools...${NC}"
 docker exec -u 0 cyber-lab bash -c "
     echo 'root:1234' | chpasswd && \
     echo 'kasm-user:1234' | chpasswd && \
+    mkdir -p /home/kasm-user/Desktop && \
+    ln -sfn /persistent_data /home/kasm-user/Desktop/persistent_data && \
+    chown -R kasm-user:kasm-user /home/kasm-user/Desktop/persistent_data /persistent_data && \
     rm -f /etc/apt/sources.list.d/google-chrome.list && \
     apt-get update -qq && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nmap wireshark sqlmap hydra sudo onboard > /dev/null 2>&1 && \
@@ -121,7 +124,7 @@ else
     
     monitor_idle &
     
-    # Wait for ANY key press to destroy container and exit cleanly
+    # Listen for any key press to trigger teardown
     read -n 1 -s -r
     cleanup
 fi
