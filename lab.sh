@@ -7,6 +7,7 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# Cleanup handler
 cleanup() {
     echo -e "\n${YELLOW}[*] Shutting down and cleaning up resources...${NC}"
     kill $(jobs -p) 2>/dev/null
@@ -20,6 +21,7 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
+# Background idle monitor
 monitor_idle() {
     local IDLE_TIME=0
     local MAX_IDLE=900 # 15 minutes
@@ -50,13 +52,12 @@ echo -e "${GREEN}[*] Launching Kasm workspace container...${NC}"
 docker run -d --name cyber-lab \
   -p 8080:6901 \
   --shm-size=512m \
-  -e VNC_PW=1234 \
+  -e VNC_PW=12345678 \
   -v /home/$USER/lab-data/persistent_data:/persistent_data \
-  kasmweb/desktop:1.15.0 > /dev/null
+  --privileged kasmweb/desktop:1.15.0 > /dev/null
 
 echo -e "${GREEN}[*] Waiting for Kasm desktop core services to boot...${NC}"
-# Poll local port 8080 until Kasm responds via HTTPS
-for i in {1..40}; do
+for i in {1..30}; do
     if curl -k -s -o /dev/null --connect-timeout 2 https://127.0.0.1:8080; then
         echo -e "${GREEN}[*] Kasm web engine is live and healthy!${NC}"
         break
@@ -66,8 +67,8 @@ done
 
 echo -e "${GREEN}[*] Applying root configurations, packages, and desktop symlinks...${NC}"
 docker exec -u 0 cyber-lab bash -c "
-    echo 'root:1234' | chpasswd && \
-    echo 'kasm-user:1234' | chpasswd && \
+    echo 'root:12345678' | chpasswd && \
+    echo 'kasm-user:12345678' | chpasswd && \
     mkdir -p /home/kasm-user/Desktop && \
     ln -sfn /persistent_data /home/kasm-user/Desktop/persistent_data && \
     chown -R kasm-user:kasm-user /home/kasm-user/Desktop /persistent_data && \
@@ -109,8 +110,8 @@ else
     echo -e "${GREEN}✅ CYBER LAB IS LIVE AND READY!${NC}"
     echo "===================================================="
     echo -e "🔗 GUI Access URL : ${CYAN}$TUNNEL_URL${NC}"
-    echo -e "👤 Username       : kasm_user (or root)"
-    echo -e "🔑 Password       : 1234"
+    echo -e "👤 Username       : kasm_user"
+    echo -e "🔑 Password       : 12345678"
     echo "===================================================="
     echo -e "💾 Persisted Dir  : ~/lab-data/persistent_data (Desktop Shortcut)"
     echo -e "💡 Note           : Passwordless 'sudo' access is enabled in GUI terminal!"
@@ -120,10 +121,10 @@ else
     
     monitor_idle &
     
-    # Flush residual terminal keystrokes
+    # Clear residual keyboard buffer
     while read -e -t 0.1 -n 10000 discard; do : ; done 2>/dev/null
     
-    # Wait for keypress to initiate cleanup
+    # Wait for keypress to trigger cleanup
     read -n 1 -s -r
     cleanup
 fi
