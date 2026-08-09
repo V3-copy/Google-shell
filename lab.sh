@@ -58,14 +58,14 @@ monitor_idle() {
 # ==========================================
 echo -e "${GREEN}[*] Initializing Automated Cyber Lab Deployment...${NC}"
 
-# Step 1: Clean up previous instances
+# Clean up previous instances
 docker rm -f cyber-lab > /dev/null 2>&1
 
-# Step 2: Ensure persistent directory exists with open write permissions
+# Ensure persistent home directory exists with open write permissions
 mkdir -p /home/$USER/lab-data/kasm_home
-chmod 777 /home/$USER/lab-data/kasm_home
+chmod -R 777 /home/$USER/lab-data/kasm_home
 
-# Step 3: Deploy Kasm Container
+# Deploy Kasm Container
 echo -e "${GREEN}[*] Launching Kasm workspace container...${NC}"
 docker run -d --name cyber-lab \
   -p 8080:6901 \
@@ -74,7 +74,7 @@ docker run -d --name cyber-lab \
   -v /home/$USER/lab-data/kasm_home:/home/kasm-user \
   --privileged kasmweb/desktop:1.15.0 > /dev/null
 
-# Step 4: Verify Container is Actively Running
+# Verify Container is Actively Running
 echo -e "${GREEN}[*] Verifying container initialization...${NC}"
 CONTAINER_READY=false
 for i in {1..20}; do
@@ -91,7 +91,7 @@ if [ "$CONTAINER_READY" != "true" ]; then
     cleanup
 fi
 
-# Step 5: Wait for Kasm VNC service to initialize before exec
+# Wait for Kasm core web engine to respond
 echo -e "${GREEN}[*] Waiting for Kasm desktop core services to boot...${NC}"
 for i in {1..30}; do
     if curl -k -s -o /dev/null --connect-timeout 2 https://127.0.0.1:8080; then
@@ -101,7 +101,7 @@ for i in {1..30}; do
     sleep 2
 done
 
-# Step 6: Configure root access, passwordless sudo, and security tools
+# Configure root access, passwordless sudo, and security tools
 echo -e "${GREEN}[*] Configuring root access & installing pentesting tools...${NC}"
 docker exec -u 0 cyber-lab bash -c "
     echo 'root:12345678' | chpasswd && \
@@ -113,7 +113,7 @@ docker exec -u 0 cyber-lab bash -c "
     echo 'kasm-user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 "
 
-# Step 7: Verify and install cloudflared
+# Verify and install cloudflared
 if ! command -v cloudflared &> /dev/null; then
     echo -e "${GREEN}[*] Installing Cloudflare Tunnel daemon...${NC}"
     wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
@@ -121,7 +121,7 @@ if ! command -v cloudflared &> /dev/null; then
     rm -f cloudflared-linux-amd64.deb
 fi
 
-# Step 8: Establish HTTPS tunnel
+# Establish HTTPS tunnel
 echo -e "${GREEN}[*] Establishing Cloudflare HTTPS Tunnel...${NC}"
 pkill -f cloudflared 2>/dev/null
 > cloudflare-lab.log
@@ -137,7 +137,7 @@ for i in {1..20}; do
     sleep 2
 done
 
-# Step 9: Print Dashboard & Block until Keypress
+# Output summary dashboard
 if [ -z "$TUNNEL_URL" ]; then
     echo -e "${RED}\n⚠️ ERROR: Tunnel failed to generate a URL. Check 'cat cloudflare-lab.log' for details.${NC}"
     cleanup
@@ -147,21 +147,22 @@ else
     echo -e "${GREEN}✅ CYBER LAB IS LIVE AND READY!${NC}"
     echo "===================================================="
     echo -e "🔗 GUI Access URL : ${CYAN}$TUNNEL_URL${NC}"
-    echo -e "👤 Username       : kasm_user (or root)"
-    echo -e "🔑 Password       : 12345678"
+    echo -e "👤 Browser User   : ${YELLOW}kasm_user${NC}  <-- USE THIS EXACT USERNAME"
+    echo -e "🔑 Browser Pass   : ${YELLOW}12345678${NC}"
+    echo "----------------------------------------------------"
+    echo -e "💻 Terminal Sudo  : Passwordless (or use 12345678)"
+    echo -e "💾 Persisted Dir  : ~/lab-data/kasm_home"
     echo "===================================================="
-    echo -e "💾 Persisted Dir  : ~/lab-data/kasm_home (Full Home & GUI Configs)"
-    echo -e "💡 Note           : Passwordless 'sudo' access is enabled in GUI terminal!"
     echo ""
     echo -e "${YELLOW}⏳ Idle Monitor Active: Auto-shutdown triggers after 15m of low CPU (<2%).${NC}"
     echo -e "${YELLOW}>>> PRESS ANY KEY OR [CTRL+C] TO STOP THE LAB AND DESTROY ENVIRONMENT <<<${NC}"
     
     monitor_idle &
     
-    # Flush any previous buffered keystrokes so it doesn't close prematurely
+    # Flush keyboard input buffer
     while read -e -t 0.1 -n 10000 discard; do : ; done 2>/dev/null
     
-    # Wait for deliberate keypress to tear down
+    # Wait for intentional key press to tear down
     read -n 1 -s -r
     cleanup
 fi
