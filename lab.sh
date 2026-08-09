@@ -46,7 +46,7 @@ docker rm -f cyber-lab > /dev/null 2>&1
 mkdir -p /home/$USER/lab-data/persistent_data
 chmod -R 777 /home/$USER/lab-data/persistent_data
 
-echo -e "${GREEN}[*] Deploying Kasm workspace container...${NC}"
+echo -e "${GREEN}[*] Launching Kasm workspace container...${NC}"
 docker run -d --name cyber-lab \
   -p 8080:6901 \
   --shm-size=512m \
@@ -54,26 +54,17 @@ docker run -d --name cyber-lab \
   -v /home/$USER/lab-data/persistent_data:/persistent_data \
   kasmweb/desktop:1.15.0 > /dev/null
 
-echo -e "${GREEN}[*] Waiting for container to fully initialize...${NC}"
-CONTAINER_IP=""
-for i in {1..30}; do
-    CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' cyber-lab 2>/dev/null)
-    if [ -n "$CONTAINER_IP" ]; then
-        break
-    fi
-    sleep 1
-done
-
-# Wait for Kasm web engine to actively respond
-echo -e "${GREEN}[*] Verifying Kasm web service health...${NC}"
-for i in {1..30}; do
-    if curl -k -s -o /dev/null --connect-timeout 2 "https://${CONTAINER_IP}:6901"; then
+echo -e "${GREEN}[*] Waiting for Kasm desktop core services to boot...${NC}"
+# Poll local port 8080 until Kasm responds via HTTPS
+for i in {1..40}; do
+    if curl -k -s -o /dev/null --connect-timeout 2 https://127.0.0.1:8080; then
+        echo -e "${GREEN}[*] Kasm web engine is live and healthy!${NC}"
         break
     fi
     sleep 2
 done
 
-echo -e "${GREEN}[*] Configuring root access, tools & symlinks...${NC}"
+echo -e "${GREEN}[*] Applying root configurations, packages, and desktop symlinks...${NC}"
 docker exec -u 0 cyber-lab bash -c "
     echo 'root:1234' | chpasswd && \
     echo 'kasm-user:1234' | chpasswd && \
@@ -85,7 +76,7 @@ docker exec -u 0 cyber-lab bash -c "
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nmap wireshark sqlmap hydra sudo onboard > /dev/null 2>&1 && \
     usermod -aG sudo kasm-user && \
     echo 'kasm-user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-" &
+"
 
 if ! command -v cloudflared &> /dev/null; then
     echo -e "${GREEN}[*] Installing Cloudflare Tunnel daemon...${NC}"
@@ -97,7 +88,7 @@ fi
 echo -e "${GREEN}[*] Establishing Cloudflare HTTPS Tunnel...${NC}"
 pkill -f cloudflared 2>/dev/null
 > cloudflare-lab.log
-nohup cloudflared tunnel --url "https://${CONTAINER_IP}:6901" --no-tls-verify > cloudflare-lab.log 2>&1 &
+nohup cloudflared tunnel --url https://127.0.0.1:8080 --no-tls-verify > cloudflare-lab.log 2>&1 &
 
 echo -e "${GREEN}[*] Awaiting tunnel handshake...${NC}"
 TUNNEL_URL=""
@@ -129,10 +120,10 @@ else
     
     monitor_idle &
     
-    # Clear residual input
+    # Flush residual terminal keystrokes
     while read -e -t 0.1 -n 10000 discard; do : ; done 2>/dev/null
     
-    # Wait for keypress
+    # Wait for keypress to initiate cleanup
     read -n 1 -s -r
     cleanup
 fi
